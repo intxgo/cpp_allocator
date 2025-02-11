@@ -5,6 +5,29 @@
 #include <memory>
 #include <thread>
 
+std::mutex print_mutex;
+
+// Overriding global operator new
+void* operator new(std::size_t size) 
+{
+    void* ptr = std::malloc(size);
+    {
+        std::lock_guard<std::mutex> lock(print_mutex);
+        std::cout << std::hex << "         new: TID " << std::this_thread::get_id() << " PTR " << ptr << " BYTES 0x" << size << "\n";
+    }
+    return ptr;
+}
+
+// Overriding global operator delete
+void operator delete(void* ptr) noexcept 
+{
+    {
+        std::lock_guard<std::mutex> lock(print_mutex);
+        std::cout << std::hex << "      delete: TID " << std::this_thread::get_id() << " PTR " << ptr << "\n";
+    }
+    std::free(ptr);
+}
+
 namespace statistics::memory
 {
     struct allocation
@@ -47,17 +70,18 @@ namespace statistics::memory
         alloc.size = bytes;
         alloc.count = count;
 
-        // {
-        //     std::lock_guard<std::mutex> lock(allocations_mutex);
-        //     std::cout << std::hex << "  allocation: TID 0x" << thread_id << " PTR 0x" << ptr << " SIZE 0x" << bytes << " CNT 0x" << count << "\n";
-        // }
+        {
+            std::lock_guard<std::mutex> lock(print_mutex);
+            std::cout << std::hex << "  allocation: TID " << thread_id << " PTR 0x" << ptr << " SIZE 0x" << bytes << " CNT 0x" << count << "\n";
+        }
     }
 
     void TrackDeallocation(std::thread::id thread_id, std::uintptr_t ptr, std::size_t bytes, std::size_t count)
     {
         if (!thread_allocation_statistics)
         {
-            std::cout << std::hex << "deallocation: TID 0x" << thread_id << " PTR 0x" << ptr << " SIZE 0x" << bytes << " CNT 0x" << count << " orphaned\n";
+            std::lock_guard<std::mutex> lock(print_mutex);
+            std::cout << std::hex << "deallocation: TID " << thread_id << " PTR 0x" << ptr << " SIZE 0x" << bytes << " CNT 0x" << count << " orphaned\n";
             return;
         }
         
@@ -69,13 +93,14 @@ namespace statistics::memory
         alloc.allocated = false;
         if (alloc.size != bytes || alloc.count != count)
         {
+            std::lock_guard<std::mutex> lock(print_mutex);
             std::cout << std::hex << "deallocation: TID 0x" << thread_id << " PTR 0x" << ptr << " SIZE 0x" << bytes << " CNT 0x" << count <<  ", mismatch!, allocated SIZE 0x" << alloc.size << " CNT 0x" << alloc.count <<  "\n";
         }
 
-        // {
-        //     std::lock_guard<std::mutex> lock(allocations_mutex);
-        //     std::cout << std::hex << "deallocation: TID 0x" << thread_id << " PTR 0x" << ptr << " SIZE 0x" << bytes << " CNT 0x" << count << "\n";
-        // }
+        {
+            std::lock_guard<std::mutex> lock(print_mutex);
+            std::cout << std::hex << "deallocation: TID 0x" << thread_id << " PTR 0x" << ptr << " SIZE 0x" << bytes << " CNT 0x" << count << "\n";
+        }
     }
 
     void PrintStatistics()
@@ -187,6 +212,7 @@ int main()
         vec2.push_back(50);
     }
 
+    std::cout << "========================\n";
 
     const int num_threads = 5;
     std::thread threads[num_threads];
@@ -202,6 +228,8 @@ int main()
     for (int i = 0; i < num_threads; ++i) {
         threads[i].join();
     }
+
+    std::cout << "========================\n";
 
     statistics::memory::PrintStatistics();
     return 0;
